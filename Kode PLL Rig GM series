@@ -533,7 +533,6 @@ unsigned long currentMillis = millis();  // Pastikan variabel waktu pakai unsign
   if (Frq < 136000) Frq = 136000;
   if (Frq > 165000) Frq = 165000;
   unsigned long TxFreq = Frq;
-  set_pll(TxFreq);
   if (Tx==0)
   {
     lcd.setCursor (14, 0);
@@ -550,6 +549,7 @@ unsigned long currentMillis = millis();  // Pastikan variabel waktu pakai unsign
   lcd.print("  ");
   digitalWrite(A0, LOW);
   }
+  set_pll(TxFreq);
   WriteFrq(TxFreq);
   TxOld=Tx;
  }
