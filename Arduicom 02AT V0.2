@@ -107,6 +107,7 @@ void setup()
 {
   Serial.begin(9600);
   pinMode(A6, OUTPUT); // ke PA mute jika logic board rusak 
+  pinMode(A3, INPUT); //Barsignal
   pinMode(A4, OUTPUT); // pin SDA 
   pinMode(A5, OUTPUT); // pin SCL
   pinMode(TOMBOL, INPUT_PULLUP);
@@ -130,8 +131,8 @@ void setup()
  lcd.backlight();  // Mengaktifkan backlight LCD
  lcd.setCursor(1, 0);
 lcd.print("Arduicom-02AT");
-lcd.setCursor(5,1);
-lcd.print("JZ13ISI"); // beberapa kode penyempurnaan berdiskusi dengan openAI 
+lcd.setCursor(2,1);
+lcd.print("HERMAN SATE"); // beberapa kode penyempurnaan berdiskusi dengan openAI 
 delay(1500);
 
 lcd.clear();  // Bersihkan layar sebelum menampilkan teks selanjutnya
@@ -456,37 +457,45 @@ void berubahSignal (){
     
 }
 void updateSignalRx (){
-  unsigned long currentMillis = millis();
-  int signal = digitalRead(6);
-  int interval = (signal == HIGH) ? riseInterval : fallInterval;
+   unsigned long currentMillis = millis();  // Pastikan variabel waktu pakai unsigned long
+  int signal = analogRead(A3); // Baca sinyal analog (0-1023)
+  int targetLevel = map(signal, 0, 700, 0, 5);
+  targetLevel = constrain(targetLevel, 0, 5); // Pastikan dalam batas 0-6
+  int interval = (level > lastLevel) ? riseInterval : fallInterval;
 
-  if (currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis;
-
-    if (signal == HIGH && level < 5) {
-      level++;  
-    } 
-    else if (signal == LOW && level > 0) {
-      level--;  
+  if (targetLevel > level) { 
+    if (currentMillis - previousMillis >= riseInterval) { 
+      previousMillis = currentMillis;
+      level++;
+      updateDisplay = true;
+    }
+  } else if (targetLevel < level) { 
+    if (currentMillis - previousMillis >= fallInterval) { 
+      previousMillis = currentMillis;
+      level--;
+      updateDisplay = true;
     }
   }
-   // Hanya update LCD jika level berubah
-  if (level != lastLevel) {
-    lastLevel = level; // Simpan nilai terakhir
+  // 🔹 Hanya update LCD jika level berubah
+  if (updateDisplay && level != lastLevel) {
+    updateDisplay = false; // Reset flag
+    lastLevel = level; // Simpan nilai terakhir) 
+  // 🔹 Hapus area bar graph
+  for (int i = 0; i < 6; i++) { 
+    lcd.setCursor(11 + i, 1);
+    lcd.print("       "); 
+  }
 
-    for (int i = 0; i < 5; i++) { 
-      lcd.setCursor(11 + i, 1);
-      if (i < level) {
-      lcd.write(byte(i + 1)); // Tampilkan karakter bar graph
-      } else {
-      lcd.print(' '); // Hapus dengan karakter spasi tunggal
-      }
-    }
-  }     
+  // 🔹 Gambar ulang bar graph
+  for (int i = 0; i < level; i++) {
+    lcd.setCursor(11 + i, 1);
+    lcd.write(i + 1);
+  }
+  }
 }
 void updateSignalTx (){
   unsigned long currentMillis = millis ();
-  int signalTx = digitalRead(7);
+  int signalTx = digitalRead(8);
   int intervalTx = (Tx == 0) ? riseInterval : fallInterval;
 
   if (currentMillis - previousMillis >= intervalTx) {
