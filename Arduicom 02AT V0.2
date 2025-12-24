@@ -86,6 +86,10 @@ byte bar5[8] = { B00000, B11111, B11111, B11111, B11111, B11111, B11111, B11111 
 byte bar6[8] = { B11111, B11111, B11111, B11111, B11111, B11111, B11111, B11111 }; 
 //logo Antenna
 byte antenna[8] = {B11111,B10001,B01010,B00100,B00100,B00100,B00100,B00100,};
+//kursor penunjuk
+byte kursor[8] = { B11111, B11111, B00000, B00000, B00000, B00000, B00000, B00000 }; 
+//logo tone
+byte nada[8] = { B00000, B00010, B00011, B00010, B00010, B01110, B11110, B01100};
 
 // Fungsi untuk menyimpan data ke EEPROM
 void saveToEEPROM() {
@@ -458,36 +462,50 @@ void berubahSignal (){
 }
 void updateSignalRx (){
    unsigned long currentMillis = millis();  // Pastikan variabel waktu pakai unsigned long
-  int signal = analogRead(A3); // Baca sinyal analog (0-1023)
-  int targetLevel = map(signal, 0, 700, 0, 5);
-  targetLevel = constrain(targetLevel, 0, 5); // Pastikan dalam batas 0-6
-  int interval = (level > lastLevel) ? riseInterval : fallInterval;
+  static int levelSignal =0;
+  int adc = analogRead(A3); // Baca sinyal analog (0-1023)
+  byte newLevel = levelSignal;
+  // HYSTERISIS + RANGE 
+  switch (levelSignal) {
+    case 0:
+    if (adc > 190) newLevel =1; 
+    break;
 
-  if (targetLevel > level) { 
-    if (currentMillis - previousMillis >= riseInterval) { 
-      previousMillis = currentMillis;
-      level++;
-      updateDisplay = true;
-    }
-  } else if (targetLevel < level) { 
-    if (currentMillis - previousMillis >= fallInterval) { 
-      previousMillis = currentMillis;
-      level--;
-      updateDisplay = true;
-    }
+    case 1:
+    if (adc > 270) newLevel =2;
+    else if (adc <150) newLevel =0;
+    break; 
+
+    case 2:
+    if (adc > 370) newLevel =3;
+    else if (adc <230) newLevel =1;
+    break;
+
+    case 3:
+    if (adc > 490) newLevel =4;
+    else if (adc <330) newLevel =2;
+    break;
+
+    case 4:
+    if (adc > 650) newLevel =5;
+    else if (adc < 440) newLevel =3;
+    break;
+
+    case 5:
+    if (adc < 600) newLevel =4;
+    break;
   }
-  // 🔹 Hanya update LCD jika level berubah
-  if (updateDisplay && level != lastLevel) {
-    updateDisplay = false; // Reset flag
-    lastLevel = level; // Simpan nilai terakhir) 
-  // 🔹 Hapus area bar graph
+  // Hanya update LCD jika level berubah
+  if (newLevel != levelSignal) {
+    levelSignal = newLevel; // Reset flag
+  // Hapus area bar graph
   for (int i = 0; i < 6; i++) { 
     lcd.setCursor(11 + i, 1);
     lcd.print("       "); 
   }
 
-  // 🔹 Gambar ulang bar graph
-  for (int i = 0; i < level; i++) {
+  // Gambar ulang bar graph
+  for (int i = 0; i < levelSignal; i++) {
     lcd.setCursor(11 + i, 1);
     lcd.write(i + 1);
   }
