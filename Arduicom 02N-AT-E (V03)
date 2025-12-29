@@ -1,0 +1,923 @@
+//*Program Icom Ic-02N/02A/02AT
+// *Basic Program dari 4XH1F Avionam Albo
+// *Disempurnakan oleh Pecco alamatnya.maspulung@gmail.com/
+// *Menggunakan protokol LCD I2C dan Rotary encoder 5Pin/
+
+#include <avr/pgmspace.h>
+#include <Bounce2.h>    
+#include <Wire.h>
+#include <LCD_I2C.h>
+#include <EEPROM.h>
+
+// Inisialisasi LCD
+LCD_I2C lcd(0x27, 16, 2);  // Alamat I2C 0x27, 16x2 LCD
+//Rotary Encoder 
+#define encoder0PinCLK  4 //encoder
+#define encoder0PinDT  3 //encoder
+#define encoder0PinSW 2 // for encoder  press
+Bounce debouncerCLK = Bounce(); 
+Bounce debouncerDT = Bounce(); 
+Bounce debouncerSW = Bounce ();
+Bounce debouncerTB = Bounce ();
+Bounce debouncerTB1 = Bounce ();
+Bounce debouncerTB2 = Bounce ();
+//Kontrol PLL
+#define CLK	5		/* Serial Data */
+#define DATA 6			/* Serial Clock */
+#define LE	7		/* Synthesizer Latch Enable */
+//Kontrol Tombol Shortcut
+#define TOMBOL A0
+#define TOMBOL1 A1
+#define TOMBOL2 A2
+//Fungsi Memori
+#define MAX_MEM 63
+unsigned long int FMem[]={1430001,1430201,1439801,1440601,1450001,1461601,1468001,1471601,1480601,1490801,1429001,1429001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001,1450001};
+unsigned long Frq=140000;
+unsigned long int NewMemToSave =0;
+int FOffset[MAX_MEM];
+bool FPlSq[MAX_MEM];
+long FrqFinal;
+//Perangkat Pendukung
+int digitPilihan =-1;
+bool lastButtonState = HIGH;
+int lastMenue = -1;
+unsigned long time1;
+int EncDo=1;// this changes when you turn the encoder +1 or -1
+long Step=5;// vfo step size
+const long MinStep = 5;  
+const long MaxStep = 100;  
+int Menue=0; // changes when you scroll the menue
+boolean Mode=1; // 0= vfo 1=memory
+int Mem=0;// first memory when turn on
+boolean Curspress=0;// knows when the encoder was pressed
+int Shift=0;// repeater shift register 0= simp// <0 -// >0 +
+int CursPos=0;// rotary encoder change
+int Tmp=0;// nice to have
+float Ctcss = 67.0; 
+int Ctcssindex = 0; // Mulai dari 67.0 Hz 
+const int CtcssPin = 9;
+boolean PlSq=0;// ctcss or cor 0 ctcss 1 cor
+boolean Tx=0;// when the rig is in tx it is 0
+boolean TxOld=0;// can do without it read insted of reg leave for now....
+boolean Rx=0;//indicates the Rx on
+boolean Power=0; //output power
+unsigned long lastPressTime = 0;  // Waktu terakhir tombol SW ditekan
+bool isPressingSW = false;
+long Offset = 300;  // Default Offset 600 kHz
+long MinOffset = 300;  // Minimum Offset 300 kHz
+long MaxOffset = 15000;  // Maximum Offset 15 MHz
+boolean SaveVfo = 0;
+//Fungsi Scan Frekuensi
+boolean Scan=0; // temp test scan function
+int MemBeforeScan = 0;// return to this frequency when stoping the scan without ptt
+
+// Bar signal untuk kece2an 
+int level=0;
+int lastLevel=-1;
+bool updateDisplay = false; 
+unsigned long previousMillis = 0;
+const long riseInterval = 30;
+const long fallInterval = 80;
+byte bar1[8] = { B00000, B00000, B00000, B00000, B00000, B11111, B11111, B11111 }; 
+byte bar2[8] = { B00000, B00000, B00000, B00000, B11111, B11111, B11111, B11111 }; 
+byte bar3[8] = { B00000, B00000, B00000, B11111, B11111, B11111, B11111, B11111 }; 
+byte bar4[8] = { B00000, B00000, B11111, B11111, B11111, B11111, B11111, B11111 }; 
+byte bar5[8] = { B00000, B11111, B11111, B11111, B11111, B11111, B11111, B11111 };
+byte bar6[8] = { B11111, B11111, B11111, B11111, B11111, B11111, B11111, B11111 }; 
+//logo Antenna
+byte antenna[8] = {B11111,B10001,B01010,B00100,B00100,B00100,B00100,B00100,};
+//kursor penunjuk
+byte kursor[8] = { B11111, B11111, B00000, B00000, B00000, B00000, B00000, B00000 }; 
+//logo tone
+byte nada[8] = { B00000, B00010, B00011, B00010, B00010, B01110, B11110, B01100};
+
+// Fungsi untuk menyimpan data ke EEPROM
+void saveToEEPROM() {
+  if(EEPROM[0] == 255 && EEPROM[1] == 255 && EEPROM[2] == 255 && EEPROM[3] == 255)
+ {
+  // Simpan data FMem ke EEPROM
+  EEPROM.put(0, FMem);  // Menyimpan data ke alamat 0
+  // Verifikasi apakah data benar-benar tersimpan
+  EEPROM.put(sizeof(FMem), FOffset);
+  EEPROM.put(sizeof(FMem), FPlSq);
+ }else{
+  // Membaca kembali data
+  EEPROM.get (0,FMem);
+  EEPROM.get (sizeof(FMem), FOffset);
+  EEPROM.get(sizeof(FMem), FPlSq);
+}
+}
+void setup()
+{
+  Serial.begin(9600);
+  pinMode(A6, OUTPUT); // ke PA mute jika logic board rusak 
+  pinMode(A3, INPUT); //Barsignal
+  pinMode(A4, OUTPUT); // pin SDA 
+  pinMode(A5, OUTPUT); // pin SCL
+  pinMode(TOMBOL, INPUT_PULLUP);
+  pinMode(TOMBOL1, INPUT_PULLUP);
+  pinMode(TOMBOL2, INPUT_PULLUP);
+  debouncerCLK.attach(encoder0PinCLK);
+  debouncerCLK.interval(5);
+  debouncerDT.attach(encoder0PinDT);
+  debouncerDT.interval(5);
+  debouncerSW.attach(encoder0PinSW);
+  debouncerSW.interval(5);
+  debouncerTB.attach(TOMBOL);
+  debouncerTB.interval(5);
+  debouncerTB1.attach(TOMBOL1);
+  debouncerTB1.interval(5);
+  debouncerTB2.attach(TOMBOL2);
+  debouncerTB2.interval(5);
+ saveToEEPROM();
+
+ lcd.begin();
+ lcd.backlight();  // Mengaktifkan backlight LCD
+ lcd.setCursor(1, 0);
+lcd.print("ArduIcom-02AT");
+lcd.setCursor(2,1);
+lcd.print("HERMAN SATE"); // beberapa kode penyempurnaan berdiskusi dengan openAI 
+delay(1500);
+
+lcd.clear();  // Bersihkan layar sebelum menampilkan teks selanjutnya
+lcd.setCursor(2, 0);
+lcd.print("DEVELOPED BY ");
+
+lcd.setCursor(3, 1);
+lcd.print("<CAK-PECO>");
+delay(1500);
+
+lcd.clear();  // Bersihkan layar
+  lcd.createChar(0, bar1);
+  lcd.createChar(1, bar2);
+  lcd.createChar(2, bar3);
+  lcd.createChar(3, bar4);
+  lcd.createChar(4, bar5);
+  lcd.createChar(5, bar6);
+  lcd.createChar(6, antenna);
+ pinMode (9,OUTPUT);// CSQ
+ pinMode (11,OUTPUT);// power out
+ pinMode(encoder0PinCLK, INPUT); // for encoder turn
+ pinMode(encoder0PinDT, INPUT); // for encoder turn 2
+ pinMode(encoder0PinSW, INPUT_PULLUP); // for encoder  press
+ pinMode(8, INPUT); //ptt
+ pinMode(10, INPUT); //Rx indicator
+ pinMode(12, OUTPUT); // If IC 4071BP Rusak
+ pinMode (LE, OUTPUT);
+ pinMode (DATA, OUTPUT);                     
+ pinMode (CLK, OUTPUT);
+  digitalWrite (DATA, LOW);
+  digitalWrite (LE, LOW);
+  digitalWrite (CLK, LOW);
+}
+void set_pll (unsigned long int hz)
+{
+  noInterrupts();
+ unsigned long int Ntotal;	  
+  hz *=1000;
+  if (Tx==0){
+  hz += Shift * Offset * 1000UL;
+  } else {
+  hz -= 16900000UL;
+  }
+  hz /= 5000;	    // Divide by 5KHz reference
+  Ntotal = hz; 
+  // Bungkus: 8 bit kontrol (misalnya 0b00000000) + 17 bit Ntotal
+unsigned long frame = ((unsigned long)0x00 << 17) | (Ntotal & 0x1FFFF);
+
+// Kirim 25 bit MSB dulu
+for (int i = 24; i >= 0; i--) {
+bool bitVal = (frame >> i) & 0x01;
+sendBit(bitVal);
+}
+pulse_le();
+interrupts();
+}
+void sendBit (bool bitVal){
+  digitalWrite(DATA, bitVal ? HIGH : LOW);
+  delayMicroseconds (2);
+  digitalWrite(CLK, HIGH);
+  delayMicroseconds(2);
+  digitalWrite(CLK, LOW);
+  delayMicroseconds (2);
+}
+void pulse_le ()
+{
+  digitalWrite (LE, HIGH);
+  delayMicroseconds (2);			
+  digitalWrite (LE, LOW);
+  delayMicroseconds (2);
+}
+void cursorpress()
+{
+  Curspress=1;
+  if (Mode==1 && Menue==1)
+  {
+    Menue=8;
+    return;
+  }
+  if(Mode==0 && Menue==0 && NewMemToSave != 0)
+  {
+    SaveVfo = 0;
+    Menue = 7;
+    return;
+  }
+  if(Menue == 7 && Mode == 0)
+  {
+    Menue = 0;
+    Mode = 1;
+    if(SaveVfo)
+    {
+      FMem[Mem] =  NewMemToSave;
+      FOffset[Mem] = Offset;
+      FPlSq[Mem] = PlSq;
+      EEPROM.put(0, FMem);
+      EEPROM.put(sizeof(FMem), FOffset);
+      EEPROM.put(sizeof(FMem) + sizeof(FOffset), FPlSq);
+    }
+    Frq = FMem[Mem] / 10;
+    Offset = FOffset[Mem];
+    PlSq = FPlSq[Mem];
+    SaveVfo = 0;
+    NewMemToSave = 0;
+    return; 
+  }
+  if (Menue==10)
+  {
+    Menue=0;
+    return;
+  }
+  if (Menue<10)
+  {
+    Menue++;
+    if(Menue == 7)
+      Menue = 8;
+    if(Menue == 9 && Mode == 0) //skip the scan menu in vfo mode
+    {
+       Menue=0; 
+    }
+  }
+  else 
+    Menue=0;
+}
+ 
+ void WriteFrq (unsigned long int Frq1)
+ {
+     if (Frq1 < 140000) Frq1 = 140000;
+     if (Frq1 > 149990) Frq1 = 149990;
+     lcd.setCursor ( 0, 0 );    
+     lcd.print(Frq1/1000);
+          lcd.print(".");
+          Tmp=Frq1%1000;
+          if (Tmp<100)
+          lcd.print("0");
+          if (Tmp<10)
+          lcd.print("0");
+          lcd.print(Tmp);
+          lcd.setCursor (8,0);
+          lcd.print("MHz");
+
+    // Indikasi Shift (+/-)
+    lcd.setCursor(12, 0);
+    if (Shift < 0) lcd.print("-");
+    if (Shift > 0) lcd.print("+");
+    if (Shift == 0) lcd.print(" ");
+
+    //Indikasi Tone Aktif
+    lcd.setCursor (6,1);
+    if(PlSq){
+      lcd.write(8);
+    } else {
+      lcd.print(" ");
+    }
+    // Mode Memory (M1, M2, dst) atau VFO
+    lcd.setCursor(0, 1);
+    if (!Mode) {
+        lcd.print("    ");
+    } else {
+        lcd.print("M:");
+        lcd.print(Mem);
+        if (Mem < 10 ) lcd.print(" ");
+    }
+
+    // Indikasi Power (Hi/Lo)
+    lcd.setCursor(8, 1);
+    if (Power) {
+        lcd.print("H");
+    } else {
+        lcd.print("L");
+    }
+
+    // Simbol khusus di pojok kanan
+    lcd.setCursor(10, 1);
+    lcd.write(6);
+}
+
+void WriteMenue() 
+{
+  // Hapus kedua baris sebelum mengganti tampilan
+  lcd.setCursor(0, 0);
+  lcd.print("                "); // Hapus baris pertama
+  lcd.setCursor(0, 1);
+  lcd.print("                "); // Hapus baris kedua
+
+  lcd.setCursor(0, 0); // Kembali ke baris atas setelah menghapus
+  
+  switch (Menue) {
+    case 0:  // VFO Frequency
+      WriteFrq(Frq);
+      break;
+
+    case 1:  // Mode
+      lcd.print("MODE  ");
+      lcd.setCursor(0, 1);
+      lcd.print(Mode ? "Memory " : "Program    ");
+      break;
+
+    case 2:  // Shift
+      lcd.print("SHIFT  ");
+      lcd.setCursor(0, 1);
+      if (Shift == 0) lcd.print("Simplex ");
+      else if (Shift == -1) lcd.print("Rpt -   ");
+      else if (Shift == 1) lcd.print("Rpt +   ");
+      break;
+
+    case 3:  // Tone Squelch
+      lcd.print("Tone  ");
+      lcd.setCursor(0, 1);
+      lcd.print(PlSq ? "Tone " : "None ");
+      break;
+
+    case 4:  // CTCSS
+      lcd.print("CTCSS ");
+      lcd.setCursor(0, 1);
+      lcd.print(Ctcss);
+      lcd.print(" Hz  ");
+      break;
+
+    case 5:  // Step
+      lcd.print("VFO Step  ");
+      lcd.setCursor(0, 1);
+      lcd.print(Step);
+      lcd.print("Khz  ");
+      break;
+
+    case 6:  // Offset
+      lcd.print("Offset ");
+      lcd.setCursor(0, 1);
+      lcd.print(Offset);
+      lcd.print(" KHz ");
+      break;
+
+    case 7:  // Save VFO (hanya di Mode VFO)
+      if (Mode == 0) {
+        lcd.print("Save?  ");
+        lcd.setCursor(0, 1);
+        lcd.print(SaveVfo ? " Yes  " : " No   ");
+      }
+      break;
+
+    case 8:  // Power
+      lcd.print("Power  ");
+      lcd.setCursor(0, 1);
+      lcd.print(Power ? " High  " : " Low   ");
+      break;
+
+    case 9:  // Scan (hanya di Memory Mode)
+      if (Mode == 1) {
+        lcd.print("Scan  ");
+        lcd.setCursor(0, 1);
+        lcd.print(Mem);
+      }
+      break;
+  }
+  Curspress = 0; // Reset Cursor Press
+}
+
+void saveVfo(){
+      if (Mode == 0) {
+        lcd.setCursor (0,0);
+        lcd.print("Save?  ");
+        lcd.setCursor(0, 1);
+        lcd.print(SaveVfo ? " Yes  " : " No   ");
+        Curspress=0;
+      }
+}
+void exitSave(){
+  lcd.clear();
+}
+
+void updateFrequency(){
+    lcd.setCursor (0,0);
+     lcd.print(Frq/1000);
+          lcd.print(".");
+          Tmp=Frq%1000;
+          if (Tmp<100)
+          lcd.print("0");
+          if (Tmp<10)
+          lcd.print("0");
+          lcd.print(Tmp);
+}
+void updatePowerDisplay() {
+    lcd.setCursor(8, 1);
+    lcd.print(Power ? "H" : "L");
+}
+void updateModeDisplay() {
+    lcd.setCursor(0, 1);
+    if (!Mode) {
+        lcd.print("    ");
+    } else {
+        lcd.print("M:");
+        lcd.print(Mem);
+        if (Mem < 10 ) lcd.print(" ");
+    }
+}
+void addShiftToNewMem()
+{
+  if(Shift < 0)
+    NewMemToSave = Frq * 10 + 3;
+  else if(Shift > 0)
+    NewMemToSave = Frq * 10 + 5;
+  else
+    NewMemToSave = Frq * 10 + 1;
+}
+void updateDigitPointer(int digit) {
+  if (digit == 0){
+     lcd.setCursor(2, 1);  lcd.print ("^");
+     lcd.setCursor(4, 1); lcd.print(" ");
+     lcd.setCursor(5, 1); lcd.print(" ");
+  }
+  else if (digit == 1) {
+    lcd.setCursor(4, 1);  lcd.print ("^");
+    lcd.setCursor(2, 1); lcd.print(" ");
+    lcd.setCursor(5, 1); lcd.print(" ");
+  }
+  else if (digit == 2) {
+    lcd.setCursor(5, 1);lcd.print ("^");
+    lcd.setCursor(2, 1); lcd.print(" ");
+    lcd.setCursor(4, 1); lcd.print(" ");
+  }
+  else {
+    return; // -1 artinya tidak ada panah
+  }
+}
+
+void berubahSignal (){
+      lcd.setCursor (13,1); lcd.print (" ");
+      lcd.setCursor (14,1); lcd.print (" ");
+      lcd.setCursor (15,1); lcd.print (" ");
+    
+}
+void updateSignalRx (){
+   unsigned long currentMillis = millis();  // Pastikan variabel waktu pakai unsigned long
+  static int levelSignal =0;
+  int adc = analogRead(A3); // Baca sinyal analog (0-1023)
+  byte newLevel = levelSignal;
+  // HYSTERISIS + RANGE 
+  switch (levelSignal) {
+    case 0:
+    if (adc > 100) newLevel =1; 
+    break;
+
+    case 1:
+    if (adc > 200) newLevel =2;
+    else if (adc <150) newLevel =0;
+    break; 
+
+    case 2:
+    if (adc > 300) newLevel =3;
+    else if (adc <170) newLevel =1;
+    break;
+
+    case 3:
+    if (adc > 400) newLevel =4;
+    else if (adc <270) newLevel =2;
+    break;
+
+    case 4:
+    if (adc > 500) newLevel =5;
+    else if (adc < 330) newLevel =3;
+    break;
+
+    case 5:
+    if (adc < 450) newLevel =4;
+    break;
+  }
+  // Hanya update LCD jika level berubah
+  if (newLevel!= levelSignal) {
+    levelSignal = newLevel; // Reset flag
+  // Hapus area bar graph
+  for (int i = 0; i < 5; i++) { 
+    lcd.setCursor(11 + i, 1);
+    lcd.print("       "); 
+  }
+
+  // Gambar ulang bar graph
+  for (int i = 0; i < levelSignal; i++) {
+    lcd.setCursor(11 + i, 1);
+    lcd.write(i + 1);
+  }
+  }
+}
+void updateSignalTx (){
+  unsigned long currentMillis = millis ();
+  int signalTx = digitalRead(8);
+  int intervalTx = (Tx == 0) ? riseInterval : fallInterval;
+
+  if (currentMillis - previousMillis >= intervalTx) {
+    previousMillis = currentMillis;
+
+    if (Tx==0 && Power && level < 5) {
+      level=5;  
+    } 
+    else if (Tx==0 && level < 2) {
+      level=2; 
+    } 
+    else if (Tx==1 && level >0){
+      level--;
+    }
+  }
+
+  // Hanya update LCD jika level berubah
+  if (level != lastLevel) {
+    lastLevel = level; // Simpan nilai terakhir
+
+    for (int i = 0; i < 5; i++) { 
+      lcd.setCursor(11 + i, 1);
+      if (i < level) {
+      lcd.write(byte(i + 1)); // Tampilkan karakter bar graph
+      } else {
+      lcd.print(' '); // Hapus dengan karakter spasi tunggal
+      }
+  }
+  } 
+}
+void loop(void)
+{ 
+  //ROTARY ENCODER
+  debouncerCLK.update();
+  if ( debouncerCLK.fell() ) {
+    if (digitalRead(encoder0PinCLK) == digitalRead(encoder0PinDT)) {
+    EncDo=-1;
+  }else {
+    EncDo=1;
+  }
+  WriteMenue ();
+  }
+  //TOMBOL EKSTERNAL
+  debouncerTB.update(); 
+  if (debouncerTB.fell()) { 
+    if((Menue !=0) || (Menue ==9)) return;
+    Mode = !Mode;  // Toggle Mode antara 0 (VFO) dan 1 (Memory)
+    updateModeDisplay(); // Update tampilan setelah Mode berubah
+     lcd.setCursor(4, 1); lcd.print(" ");
+     lcd.setCursor(5, 1); lcd.print(" ");
+  }
+  debouncerTB1.update();
+  if (debouncerTB1.fell()) { 
+    if (Menue !=0) return; 
+    if (Mode == 0 || Mode == 1) {  // Bisa berubah di VFO & Memory
+        Power = !Power;  // Toggle antara High dan Low
+        updatePowerDisplay();  // Perbarui tampilan H/L
+    if (Power) {
+    digitalWrite(11, LOW);  // Aktifkan relay
+    } else {
+    digitalWrite(11, HIGH);   // Matikan relay jika salah satu kondisi tidak terpenuhi
+   }
+    }
+  }
+  debouncerTB2.update();
+  if (debouncerTB2.fell()) {
+    if (Menue = !Menue){ //fungsi exit menue dengan tombol
+      Mode ==1;
+      Menue =0;
+    }
+    lcd.clear();
+    WriteFrq(Frq);
+    //Fungsi merubah digit 
+    if (Mode==0){
+    digitPilihan++;
+    if (digitPilihan > 2) digitPilihan = -1;
+    updateDigitPointer(digitPilihan);
+      }
+    }
+  //TOMBOL ROTARY
+  debouncerSW.update ();
+  if(debouncerSW.fell ()) {
+    if (Mode == 1 && Menue == 0) {
+      Menue = 1;
+      WriteMenue();
+    } 
+    else if (Mode == 0 && Menue == 0) {
+      Menue = 7;
+      WriteMenue();
+    }
+    else {
+    cursorpress();
+    }
+}
+  Tmp=digitalRead(10);
+  if(Rx!=Tmp)
+{
+  Rx=Tmp;
+  if (Rx==1){
+  lcd.setCursor ( 14, 0 );
+  lcd.print("Rx");
+  digitalWrite(12, HIGH);
+  }else if (Tx==0) {
+    lcd.setCursor(14,0);
+    lcd.print("Tx");
+    digitalWrite(12, LOW);
+  } else if (Menue==1){
+    lcd.setCursor(14,0);
+    lcd.print("  ");
+    digitalWrite(12, HIGH);
+  }else
+  { 
+    lcd.setCursor(14,0);
+    lcd.print("  ");
+    digitalWrite(12, HIGH);
+  }
+  WriteFrq(Frq);
+}
+  updateSignalRx();
+
+ Tx=digitalRead(8);
+ if(Tx!=TxOld) {
+  if (Frq < 140000) Frq = 140000;
+  if (Frq > 149990) Frq = 149990;
+  unsigned long TxFreq = Frq;
+  set_pll(TxFreq);
+  lcd.setCursor (14, 0);
+  if (Tx==0)
+  {
+    digitalWrite(12, LOW);
+    lcd.print("Tx");
+    Menue=0;
+    if (Shift ==1) {
+      TxFreq += Offset;
+    } else if (Shift ==-1) {
+      TxFreq -= Offset;
+    }
+  }
+  else {
+  lcd.setCursor (14, 0);
+  lcd.print("  ");
+  digitalWrite(12, HIGH);
+  }
+  if (Tx==0 && Power) {
+    updateSignalTx();
+  }
+  else if (Tx==0){
+    berubahSignal();
+  }
+  WriteFrq(TxFreq);
+  TxOld=Tx;
+ }
+  updateSignalTx();
+
+ if(EncDo||0)
+  {
+    if (Menue == 0) // VFO
+  {
+  if (!Mode) {
+    if (digitPilihan != -1) {
+    if (digitPilihan == 0) 
+      Frq += (EncDo > 0) ? 1000 : -1000; // Ratusan    } 
+    if (digitPilihan == 1) 
+      Frq += (EncDo > 0) ? 100 : -100; // Puluhan
+    if (digitPilihan == 2) 
+      Frq += (EncDo > 0) ? 10 : -10; // Satuan
+    } else {
+      Frq += EncDo * Step;  // Mode normal kalau digitPilihan = -1
+    }
+    updateDigitPointer(digitPilihan);
+    EncDo = 0;
+    if (Frq > 149990) Frq = 140000;
+    if (Frq < 140000) Frq = 149990;
+    set_pll(Frq);
+    updateFrequency();
+    addShiftToNewMem();
+    }
+      else // memory mode
+      {
+        if(EncDo>0 && Mem< (sizeof (FMem)/4)-1) 
+          Mem++;
+        else if(EncDo>0)
+          Mem=0;
+        if((EncDo<0)&&(Mem>0)) 
+          Mem--;
+        else if(EncDo<0)
+          Mem=sizeof (FMem)/4-1;
+        EncDo=0; 
+      ///////////////////////////////////////////////////////
+       Frq=FMem[Mem]/10;
+       PlSq = FPlSq[Mem];
+       Offset = FOffset[Mem];   // ambil offset terpisah
+       Tmp=FMem[Mem]%10;
+       if(Tmp>4) Shift=1;
+       else if (Tmp>2) Shift=-1;
+       else Shift=0;
+       WriteFrq(Frq);
+       set_pll(Frq);
+     }
+   }
+  else if (Menue==1)// Mode
+  {
+    Mode=!Mode;
+    EncDo=0;
+    WriteMenue ();
+    if(Mode)
+    {
+      Frq=FMem[Mem]/10;
+       PlSq = FPlSq[Mem];
+      Offset = FOffset[Mem];   // ambil offset terpisah
+      Tmp=FMem[Mem]%10;
+      if(Tmp>4) Shift=1;
+      else if (Tmp>2) Shift=-1;
+      else Shift=0;
+      set_pll(Frq);
+    }
+   }
+  
+  else if (Menue==2)// shift
+  {
+    if(EncDo>0)
+    {
+   if(Shift<1)
+   Shift++;
+   else Shift=-1;
+    }
+        if(EncDo<0)
+    {
+   if(Shift>-1)
+   Shift--;
+   else Shift=1;
+    }
+    EncDo=0;
+    WriteMenue ();
+    
+  addShiftToNewMem();
+} 
+  else if (Menue==3)// PL SQUELCH
+    {
+        PlSq = !PlSq;  // Toggle status PL Squelch
+        if (PlSq) {
+        setCtcss(Ctcss); // Aktifkan CTCSS dengan frekuensi yang diinginkan
+        } else {
+        setCtcss(0); // Matikan CTCSS
+        }
+        EncDo = 0;
+        WriteMenue();
+    }
+
+  else if (Menue==4){//CTCSS
+  if(EncDo>0)
+  {
+    if (Ctcss==67.0) Ctcss = 71.9;
+    else if (Ctcss==71.9) Ctcss=77.0;
+    else if (Ctcss==77.0) Ctcss=82.5;
+    else if (Ctcss==82.5) Ctcss=88.5;
+    else if (Ctcss==88.5) Ctcss=94.8;
+    else if (Ctcss==94.8) Ctcss=103.5;
+    else if (Ctcss==103.5) Ctcss=110.9;
+    else if (Ctcss==110.9) Ctcss=118.8;
+    else if (Ctcss==118.8) Ctcss=127.3;
+    else if (Ctcss==127.3) Ctcss=136.5;
+  }
+  if(EncDo<0) {
+    if (Ctcss==136.5) Ctcss=127.3;
+    else if (Ctcss==127.3) Ctcss=118.8;
+    else if (Ctcss==118.8) Ctcss=110.9;
+    else if (Ctcss==110.9) Ctcss=103.5;
+    else if (Ctcss==103.5) Ctcss=94.8;
+    else if (Ctcss==94.8) Ctcss=88.5;
+    else if (Ctcss==88.5) Ctcss=82.5;
+    else if (Ctcss==82.5) Ctcss=77.0;
+    else if (Ctcss==77.0) Ctcss=71.9;
+    else if (Ctcss==71.9) Ctcss=67.0;
+  }
+  EncDo=0;
+  WriteMenue ();
+  }
+  else if (Menue==5)// step
+  {
+    if(EncDo>0)
+    {
+      if (Step==5) Step=10;
+      else if (Step==10) Step =20;
+      else if (Step==20) Step=50;
+      else if (Step==50) Step=100;
+    }
+    if(EncDo<0)
+    {
+       if (Step==100) Step=50;
+       else if (Step==50) Step=20;
+       else if (Step==20) Step=10;
+       else if (Step==10) Step=5;
+    }
+    EncDo=0;
+    WriteMenue ();
+  }
+  else if (Menue == 6) { //Offset
+     if (EncDo == 1) {
+      Offset += Step;
+      if (Offset > MaxOffset) Offset=MaxOffset;
+  }
+  if (EncDo == -1) {
+      Offset -= Step;
+      if (Offset < MinOffset) Offset=MinOffset;
+  }
+      EncDo=0;
+    WriteMenue();
+  }
+  else if (Menue==7 && Mode == 0)// save vfo
+  {
+    SaveVfo =!SaveVfo;
+    EncDo=0;
+    saveVfo();
+  }
+  else if (Menue==9 && Mode == 1)// scan
+  {
+    Scan=1;
+    EncDo=0;
+    MemBeforeScan = Mem;
+    scan();
+    WriteMenue(); 
+  }
+  else if (Menue==8)// POwer
+  {
+    Power=!Power;
+    EncDo=0;
+    WriteMenue();
+  }
+  if (Power) {
+    digitalWrite(11, LOW);  // Aktifkan relay
+  } else {
+    digitalWrite(11, HIGH);   // Matikan relay jika salah satu kondisi tidak terpenuhi
+  }
+  }
+}
+void setCtcss(float freq) { 
+    if (freq > 0) {
+        uint8_t top = (16000000 / (2 * 32 * freq)) - 1; // Prescaler 32
+        OCR2A = top; // Set batas atas
+
+        TCCR2A = (1 << WGM20) | (1 << WGM21) | (1 << COM2A1); // Fast PWM, Non-inverting mode
+        TCCR2B = (1 << WGM22) | (1 << CS21) | (1 << CS20); // Prescaler 32
+    } else { 
+        TCCR2A = 0;
+        TCCR2B = 0;
+        digitalWrite(9, LOW); // Matikan output
+    }
+}
+
+void scan()
+{
+  int Delay1=300;
+  while(Scan)
+  {
+    if( Mem< sizeof (FMem)/4-33) ///// dont want to scan last 32 mem////
+      Mem++;
+    else Mem=0;
+    Frq=FMem[Mem]/10;
+    PlSq = FPlSq[Mem];
+    Tmp=FMem[Mem]%10;
+    if(Tmp>4) Shift=1;
+    else if (Tmp>2) Shift=-1;
+    else Shift=0;
+    Offset = FOffset[Mem];   // ambil offset terpisah
+    WriteFrq(Frq);
+    set_pll(Frq);
+    time1=millis();
+    Delay1=300;
+    while((millis()-time1)<Delay1)
+    {
+      debouncerCLK.update();
+      debouncerSW.update();
+      if(digitalRead(10))
+      {
+        Delay1=5000;
+        time1=millis();
+      }
+      if(!digitalRead(8))
+      {
+        Scan=0;
+        Menue=0;
+        return;
+      }
+      if(debouncerSW.fell())
+      {
+        Scan=0;
+        Menue=0;
+        Mem = MemBeforeScan;
+        Frq=FMem[Mem]/10;
+        PlSq = FPlSq[Mem];
+        Offset = FOffset[Mem];   // ambil offset terpisah
+        WriteFrq(Frq);
+        set_pll(Frq);
+        return;
+      }
+    }    
+  }
+}
